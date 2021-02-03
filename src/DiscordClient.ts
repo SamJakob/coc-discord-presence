@@ -7,6 +7,8 @@ export class DiscordClient {
 	private config: WorkspaceConfiguration;
 	private rpc: DiscordRPC.Client;
 
+	private onDisconnect: any;
+
 	private _connected: boolean;
 	get connected(): boolean {
 		return this._connected;
@@ -31,13 +33,23 @@ export class DiscordClient {
 				resolve();
 			});
 
+			this.rpc.on('disconnected', () => {
+				try {
+					if (!!this.onDisconnect)
+						// If we were already connected, then this disconnect was unexpected.
+						this.onDisconnect(this._connected);
+				} catch (_) {}
+
+				this._connected = false;
+			});
+
 			this.rpc.login({ clientId: '805896688786866185' }).catch((err) => reject(err.toString()));
 		});
 	}
 
 	disconnect(): void {
-		this.rpc?.destroy();
 		this._connected = false;
+		this.rpc?.destroy();
 	}
 
 	setPresence(presence: IPresence): void {
@@ -47,5 +59,9 @@ export class DiscordClient {
 				...toDiscordPresence(presence),
 			});
 		}
+	}
+
+	setOnDisconnect(onDisconnect: any): void {
+		this.onDisconnect = onDisconnect;
 	}
 }

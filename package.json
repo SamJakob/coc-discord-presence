@@ -61,12 +61,16 @@
 		},
 		"commands": [
 			{
-				"command": "coc-discord-presence.Command",
-				"title": "coc-discord-presence command title"
+				"command": "discord.connect",
+				"title": "Connects to Discord RPC and shows the rich-presence."
+			},
+			{
+				"command": "discord.disconnect",
+				"title": "Disconnects from Discord RPC and hides the rich-presence."
 			}
 		]
 	},
 	"dependencies": {
-		"discord-rpc": "^3.1.4"
+		"discord-rpc": "samjakob/discordjs-rpc"
 	}
 }

@@ -1,5 +1,6 @@
-import { commands, CompleteResult, ExtensionContext, window, workspace, WorkspaceConfiguration } from 'coc.nvim';
+import { commands, ExtensionContext, window, workspace, WorkspaceConfiguration } from 'coc.nvim';
 import { basename } from 'path';
+import fs from 'fs';
 
 import { DiscordClient } from './DiscordClient';
 import { getIcon } from './Icon';
@@ -29,7 +30,8 @@ async function updateClientState(): Promise<void> {
 	const currentState = await workspace.getCurrentState();
 
 	let fileName = basename(currentState.document.uri);
-	let workspaceName = workspace.getWorkspaceFolder(currentState.document.uri)?.name ?? undefined;
+	// let workspaceName = workspace.getWorkspaceFolder(currentState.document.uri)?.name ?? undefined;
+	let workspaceName = workspace.workspaceFolder?.name ?? undefined;
 
 	let pseudoBufferState = bufferState; // allows the buffer state to be overridden by the focus state.
 	if (focusState !== FocusState.GAINED) pseudoBufferState = BufferState.IDLING;
@@ -37,16 +39,14 @@ async function updateClientState(): Promise<void> {
 	let languageIcon = getIcon(currentState?.document?.languageId, fileName, workspace);
 
 	try {
-
 		client.setPresence({
 			action: pseudoBufferState,
 			currentFile: pseudoBufferState !== BufferState.IDLING ? fileName : undefined,
 			workspaceName: workspaceName,
 			startTime: workspaceOpenTime,
 			languageName: languageIcon,
-			languageIcon
+			languageIcon,
 		});
-
 	} catch (ex) {}
 }
 
@@ -77,8 +77,28 @@ export async function activate(context: ExtensionContext): Promise<void> {
 
 	// Register event handlers.
 	context.subscriptions.push(
-		commands.registerCommand('coc-discord-presence.Command', async () => {
-			window.showMessage(`coc-discord-presence Commands ${autoEnabled}!`);
+		commands.registerCommand('discord.connect', async () => {
+			try {
+				window.showMessage('[Discord] Connecting...');
+				await client.connect();
+
+				await updateClientState();
+				updateIntervalId = setInterval(updateClientState, rpcRefreshInterval);
+
+				window.showMessage(`[Discord] Connected! Welcome, ${client.username}!`);
+			} catch (err) {
+				window.showErrorMessage(`[Discord] Failed to connect.`);
+				window.showDialog({
+					title: 'Discord Presence',
+					content: 'An error has occurred:\n' + err.toString(),
+				});
+			}
+		}),
+
+		commands.registerCommand('discord.disconnect', async () => {
+			window.showMessage('[Discord] Disconnecting...');
+			deactivate();
+			window.showMessage('[Discord] Disconnected.');
 		}),
 
 		workspace.registerAutocmd({
@@ -138,21 +158,76 @@ export async function activate(context: ExtensionContext): Promise<void> {
 		})
 	);
 
+	client.setOnDisconnect(async (wasUnexpected: boolean) => {
+		clearInterval(updateIntervalId);
+		clearInterval(inactiveIntervalId);
+
+		if (wasUnexpected) {
+			// Show message and attempt to reconnect.
+			window.showErrorMessage('[Discord] Connection lost! Attempting to reconnect...');
+
+			let connected = false;
+			let attempt = 0;
+			let maxAttempts = 30;
+
+			while (!connected) {
+				try {
+					await client.connect();
+
+					await updateClientState();
+					updateIntervalId = setInterval(updateClientState, rpcRefreshInterval);
+
+					window.showMessage(`[Discord] Reconnected! Welcome, ${client.username}!`);
+					connected = true;
+				} catch (error) {
+					window.showErrorMessage(
+						`[Discord] Reconnecting... ${attempt}s/${maxAttempts}s...`
+					);
+
+					await new Promise((resolve) => setTimeout(resolve, 1000));
+
+					if (attempt >= maxAttempts) break;
+				}
+
+				attempt++;
+			}
+		}
+	});
+
+	// Check if the project has a .nodiscord file.
+	let projectRoot = workspace.workspaceFolder?.uri?.replace('file://', '');
+	// window.showMessage(projectRoot + '/.nodiscord');
+
+	//let noDiscordFile = !!projectRoot ? await workspace.readFile(projectRoot + '/.nodiscord') : null;
+	//let disableForProject = noDiscordFile !== null;
+
+	let disableForProject = await new Promise((resolve) => {
+		// Check the file exists.
+		fs.access(projectRoot + '/.nodiscord', fs.constants.F_OK, (err) => {
+			if (err) return resolve(false);
+			return resolve(true);
+		});
+	});
+
+	if (disableForProject) {
+		window.showInformationMessage('[Discord] Disabled for this workspace because of .nodiscord file.');
+	}
+
 	// Initialize now if set to auto-connect.
-	if (autoEnabled) {
+	if (autoEnabled && !disableForProject) {
 		try {
 			await client.connect();
 
 			await updateClientState();
 			updateIntervalId = setInterval(updateClientState, rpcRefreshInterval);
 
-			window.showMessage(`[Discord] Welcome ${client.username}!`);
+			window.showMessage(`[Discord] Connected! Welcome ${client.username}!`);
 		} catch (error) {
 			window.showErrorMessage('Failed to connect to Discord!');
-			window.showDialog({
+			/*window.showDialog({
 				title: 'Error',
 				content: error.toString(),
-			});
+			});*/
 		}
 	}
 }
